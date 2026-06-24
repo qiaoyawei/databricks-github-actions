@@ -1,0 +1,146 @@
+name: Databricks CI/CD Pipeline
+
+on:
+  push:
+    branches: [databricks-cicd]
+    paths:
+      - 'notebooks/**'  # 仅 notebooks 目录变化时触发
+  pull_request:
+    branches: [databricks-cicd]
+    paths:
+      - 'notebooks/**'
+
+env:
+  DATABRICKS_HOST: ${{ vars.DATABRICKS_HOST }}
+  DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+  # DATABRICKS_AUTH_TYPE: github-oidc  # 如使用 OIDC 认证，取消注释
+  # DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+  DATABRICKS_BASE_PATH: /Workspace/test-actions  # Databricks 多级目标路径
+
+jobs:
+  detect-and-deploy:
+    name: Detect Changes & Deploy to Databricks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 获取完整 git 历史，用于 diff
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install databricks-cli
+
+      - name: Get changed notebook files
+        id: changed-files
+        run: |
+          # 获取本次 push 中 notebooks/ 目录下变化的文件
+          if "${{ github.event_name }}" == "push"; then
+            CHANGED_FILES=$(git diff --name-only --diff-filter=ACMR ${{ github.event.before }} ${{ github.sha }} -- notebooks/)
+          else
+            # PR 场景：与 main 分支比较
+            git fetch origin main
+            CHANGED_FILES=$(git diff --name-only --diff-filter=ACMR origin/main HEAD -- notebooks/)
+          fi
+
+          echo "Changed notebooks:"
+          echo "$CHANGED_FILES"
+
+          # 输出为多行环境变量
+          echo "CHANGED_FILES<<EOF" >> $GITHUB_ENV
+          echo "$CHANGED_FILES" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: Deploy changed notebooks to Databricks
+        if: env.CHANGED_FILES != ''
+        run: |
+          echo "🚀 Deploying notebooks to Databricks..."
+          echo "Base path: ${{ env.DATABRICKS_BASE_PATH }}"
+
+          # 逐文件导入，保持本地目录结构映射到 Databricks 多级路径
+          while IFS= read -r file; do
+            if [ -f "$file" ]; then
+              echo "📄 Deploying: $file"
+
+              # 去掉 notebooks/ 前缀，保留子目录结构
+              # 例如: notebooks/project1/etl/init.py -> project1/etl/init
+              REL_PATH="${file#notebooks/}"
+              REL_DIR=$(dirname "$REL_PATH")
+              FILE_NAME=$(basename "$REL_PATH")
+              BASE_NAME="${FILE_NAME%.*}"
+
+              # 拼接 Databricks 多级路径
+              # 例如: /Users/xxx/projects/project1/etl/init
+              if [ "$REL_DIR" = "." ]; then
+                TARGET_PATH="${{ env.DATABRICKS_BASE_PATH }}/${BASE_NAME}"
+              else
+                TARGET_PATH="${{ env.DATABRICKS_BASE_PATH }}/${REL_DIR}/${BASE_NAME}"
+              fi
+
+              echo "   → Target: $TARGET_PATH"
+
+              # 检测文件扩展名，设置语言和格式
+              EXT="${FILE_NAME##*.}"
+              case "$EXT" in
+                py)
+                  LANGUAGE="PYTHON"
+                ;;
+                sql)
+                  LANGUAGE="SQL"
+                ;;
+                scala)
+                  LANGUAGE="SCALA"
+                ;;
+                r|R)
+                  LANGUAGE="R"
+                ;;
+                *)
+                  echo "⚠️ Skipping unsupported file type: $file"
+                  continue
+                ;;
+              esac
+
+              # 使用 databricks workspace import 推送
+              databricks workspace import \
+                --file "$file" \
+                --path "$TARGET_PATH" \
+                --format SOURCE \
+                --language "$LANGUAGE" \
+                --overwrite
+
+              echo "✅ Successfully deployed: $TARGET_PATH"
+            fi
+          done <<< "${{ env.CHANGED_FILES }}"
+
+      - name: Summary
+        if: env.CHANGED_FILES != ''
+        run: |
+          echo "## 📊 Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Local File | Databricks Path |" >> $GITHUB_STEP_SUMMARY
+          echo "|------------|-----------------|" >> $GITHUB_STEP_SUMMARY
+          while IFS= read -r file; do
+            if [ -f "$file" ]; then
+              REL_PATH="${file#notebooks/}"
+              REL_DIR=$(dirname "$REL_PATH")
+              FILE_NAME=$(basename "$REL_PATH")
+              BASE_NAME="${FILE_NAME%.*}"
+              if [ "$REL_DIR" = "." ]; then
+                TARGET_PATH="${{ env.DATABRICKS_BASE_PATH }}/${BASE_NAME}"
+              else
+                TARGET_PATH="${{ env.DATABRICKS_BASE_PATH }}/${REL_DIR}/${BASE_NAME}"
+              fi
+              echo "| \`$file\` | \`$TARGET_PATH\` |" >> $GITHUB_STEP_SUMMARY
+            fi
+          done <<< "${{ env.CHANGED_FILES }}"
+
+      - name: No changes detected
+        if: env.CHANGED_FILES == ''
+        run: echo "ℹ️ No notebook changes detected. Skipping deployment."
