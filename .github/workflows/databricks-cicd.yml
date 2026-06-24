@@ -58,6 +58,11 @@ jobs:
           echo "$CHANGED_FILES" >> $GITHUB_ENV
           echo "EOF" >> $GITHUB_ENV
 
+      - name: Create target directories on Databricks
+        run: |
+          echo "📁 Ensuring target directory exists..."
+          databricks workspace mkdirs "${{ env.DATABRICKS_BASE_PATH }}" 2>/dev/null || true
+
       - name: Deploy changed notebooks to Databricks
         if: env.CHANGED_FILES != ''
         run: |
@@ -106,6 +111,10 @@ jobs:
                   continue
                 ;;
               esac
+
+              # 确保父目录存在
+              TARGET_DIR=$(dirname "$TARGET_PATH")
+              databricks workspace mkdirs "$TARGET_DIR" 2>/dev/null || true
 
               # 使用 databricks workspace import 推送（新 CLI v2 语法）
               databricks workspace import "$file" "$TARGET_PATH" \
