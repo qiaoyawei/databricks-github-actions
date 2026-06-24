@@ -7,4 +7,6 @@ spark.conf.set("spark.sql.shuffle.partitions", "8")
 raw_df = spark.read.json("/mnt/raw/sample_data")
 raw_df.createOrReplaceTempView("raw_data")
 
-print("✅ 初始化完成")
+# v2 - 更新测试 CICD 触发
+df_count = spark.sql("SELECT COUNT(*) as cnt FROM raw_data").collect()[0]["cnt"]
+print(f"✅ 初始化完成，共 {df_count} 条记录")
