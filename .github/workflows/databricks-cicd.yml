@@ -2,11 +2,11 @@ name: Databricks CI/CD Pipeline
 
 on:
   push:
-    branches: [databricks-cicd]
+    branches: [feature/databricks-cicd]
     paths:
       - 'notebooks/**'  # 仅 notebooks 目录变化时触发
   pull_request:
-    branches: [databricks-cicd]
+    branches: [feature/databricks-cicd]
     paths:
       - 'notebooks/**'
 
