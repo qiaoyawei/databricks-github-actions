@@ -36,7 +36,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install databricks-cli
+          pip install databricks-cli>=0.236.0
 
       - name: Get changed notebook files
         id: changed-files
@@ -107,10 +107,8 @@ jobs:
                 ;;
               esac
 
-              # 使用 databricks workspace import 推送
-              databricks workspace import \
-                --file "$file" \
-                --path "$TARGET_PATH" \
+              # 使用 databricks workspace import 推送（新 CLI v2 语法）
+              databricks workspace import "$file" "$TARGET_PATH" \
                 --format SOURCE \
                 --language "$LANGUAGE" \
                 --overwrite
